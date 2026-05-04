@@ -1,0 +1,72 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="24dp"
+    android:gravity="center_horizontal"
+    android:background="@drawable/dialog_bg">
+
+    <!-- Logo icon -->
+    <TextView
+        android:layout_width="56dp"
+        android:layout_height="56dp"
+        android:gravity="center"
+        android:text="V"
+        android:textColor="#ffffff"
+        android:textSize="28sp"
+        android:fontFamily="@font/dancing_script"
+        android:background="@drawable/bubble_bg"
+        android:layout_marginBottom="16dp" />
+
+    <!-- Title -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Voicetyper"
+        android:textColor="#7c3aed"
+        android:textSize="24sp"
+        android:fontFamily="@font/dancing_script"
+        android:layout_marginBottom="4dp" />
+
+    <!-- Subtitle -->
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="设置服务器地址"
+        android:textColor="#a78bfa"
+        android:textSize="13sp"
+        android:letterSpacing="0.08"
+        android:layout_marginBottom="20dp" />
+
+    <!-- Input field -->
+    <EditText
+        android:id="@+id/urlInput"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:hint="https://xxx.trycloudflare.com/listen"
+        android:textColor="#4c1d95"
+        android:textColorHint="#c4b5fd"
+        android:textSize="14sp"
+        android:inputType="textUri"
+        android:paddingStart="16dp"
+        android:paddingEnd="16dp"
+        android:background="@drawable/dialog_input_bg"
+        android:layout_marginBottom="20dp"
+        android:imeOptions="actionGo" />
+
+    <!-- Connect button -->
+    <Button
+        android:id="@+id/connectBtn"
+        android:layout_width="match_parent"
+        android:layout_height="50dp"
+        android:text="连接"
+        android:textColor="#ffffff"
+        android:textSize="15sp"
+        android:textStyle="bold"
+        android:background="@drawable/btn_primary_bg"
+        android:stateListAnimator="@null"
+        android:elevation="4dp"
+        android:layout_marginBottom="4dp" />
+
+</LinearLayout>

@@ -1,0 +1,31 @@
+apply plugin: 'com.android.application'
+
+android {
+    namespace 'com.voicetyper.app'
+    compileSdk 34
+    buildToolsVersion "35.0.1"
+
+    defaultConfig {
+        applicationId "com.voicetyper.app"
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName "1.0"
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+}
+
+dependencies {
+    implementation 'androidx.appcompat:appcompat:1.6.1'
+    implementation 'androidx.webkit:webkit:1.8.0'
+}
