@@ -1,8 +1,9 @@
 """
-Voicetyper 1.6 — Pure HTML + FastAPI + AI + Voice Chat + PWA
+Voicetyper 1.7 — Pure HTML + FastAPI + AI + Voice Chat + PWA + History
   /admin   →  broadcast control (manual + AI ghostwriter + 数字分身)
+  /m       →  mobile admin (quick broadcast + history)
   /listen  →  immersive receiver (broadcast + AI voice chat) + PWA
-  /api/*   →  REST + AI generation + AI chat + persona
+  /api/*   →  REST + AI generation + AI chat + persona + history
   /audio/  →  static WAV files
 """
 import os
@@ -28,7 +29,12 @@ SOVITS_API = "http://127.0.0.1:9880"
 DEEPSEEK_KEY = "sk-b30ad7aa93854170919aab6473a03b21"
 DEEPSEEK_URL = "https://api.deepseek.com/chat/completions"
 AUDIO_DIR = "/tmp/voicetyper"
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "data")
 os.makedirs(AUDIO_DIR, exist_ok=True)
+os.makedirs(DATA_DIR, exist_ok=True)
+
+CHAT_HISTORY_FILE = os.path.join(DATA_DIR, "chat_history.json")
+BROADCAST_HISTORY_FILE = os.path.join(DATA_DIR, "broadcast_history.json")
 
 last_updated = 0
 latest_url = None
@@ -52,8 +58,55 @@ AI_CHAT_SYSTEM_PROMPT = (
 persona_text = ""  # 用户上传的聊天记录，用于定制 AI 风格
 persona_lock = threading.Lock()
 
-chat_history = []  # [{"role":"user"/"assistant","content":"..."}]
+# ---- 聊天持久化 ----
+chat_history = []  # [{"role":"user"/"assistant","content":"...","time":1234567890}]
 chat_lock = threading.Lock()
+
+def _load_chat_history():
+    """从 JSON 文件载入聊天记录"""
+    global chat_history
+    try:
+        if os.path.exists(CHAT_HISTORY_FILE):
+            with open(CHAT_HISTORY_FILE, "r", encoding="utf-8") as f:
+                chat_history = json.load(f)
+            print(f"  Chat history loaded: {len(chat_history)} messages", flush=True)
+    except Exception as e:
+        print(f"  Chat history load failed: {e}", flush=True)
+        chat_history = []
+
+def _save_chat_history():
+    """持久化聊天记录到 JSON 文件"""
+    try:
+        with open(CHAT_HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(chat_history, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"  Chat history save failed: {e}", flush=True)
+
+# ---- 广播历史 ----
+broadcast_history = []  # [{"text":...,"time":...,"url":...}]
+broadcast_history_lock = threading.Lock()
+
+def _load_broadcast_history():
+    global broadcast_history
+    try:
+        if os.path.exists(BROADCAST_HISTORY_FILE):
+            with open(BROADCAST_HISTORY_FILE, "r", encoding="utf-8") as f:
+                broadcast_history = json.load(f)
+            print(f"  Broadcast history loaded: {len(broadcast_history)} items", flush=True)
+    except Exception as e:
+        print(f"  Broadcast history load failed: {e}", flush=True)
+        broadcast_history = []
+
+def _save_broadcast_history():
+    try:
+        with open(BROADCAST_HISTORY_FILE, "w", encoding="utf-8") as f:
+            json.dump(broadcast_history, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"  Broadcast history save failed: {e}", flush=True)
+
+# 啟動時載入
+_load_chat_history()
+_load_broadcast_history()
 
 # 位置追踪
 location_history = []  # [{"lat":...,"lng":...,"accuracy":...,"timestamp":...}]
@@ -110,9 +163,16 @@ def broadcast(text: str) -> str:
             fpath = os.path.join(AUDIO_DIR, fname)
             with open(fpath, "wb") as f:
                 f.write(resp.content)
+            now = time.time()
             with _lock:
                 latest_url = f"/audio/{fname}"
-                last_updated = time.time()
+                last_updated = now
+            # 记录广播历史
+            with broadcast_history_lock:
+                broadcast_history.append({"text": text, "time": now, "url": latest_url})
+                if len(broadcast_history) > 500:
+                    broadcast_history[:] = broadcast_history[-500:]
+                _save_broadcast_history()
             _cleanup()
             _publish_event({"type": "broadcast", "url": latest_url, "ts": last_updated})
             return f"已广播 — {text}"
@@ -194,10 +254,11 @@ def ai_chat(text: str) -> dict:
         reply = data["choices"][0]["message"]["content"].strip()
 
         with chat_lock:
-            chat_history.append({"role": "user", "content": text})
-            chat_history.append({"role": "assistant", "content": reply})
-            if len(chat_history) > 20:
-                chat_history = chat_history[-20:]
+            now = time.time()
+            chat_history.append({"role": "user", "content": text, "time": now})
+            chat_history.append({"role": "assistant", "content": reply, "time": now})
+            # 保留全部記錄，只持久化
+            _save_chat_history()
 
         # 2. TTS
         url = None
@@ -922,6 +983,7 @@ function switchMode(mode){{
     }}else{{
         document.getElementById('broadcastUI').classList.add('hide');
         document.getElementById('chatUI').classList.add('show');
+        loadChatHistory();  // 切換到對話模式時重新載入歷史
         if(_listening){{
             _listening=false;
             document.getElementById('initBtn').classList.remove('listening');
@@ -1237,6 +1299,23 @@ function resetChat(){{
     fetch('/api/ai/chat/reset',{{method:'POST'}}).catch(function(){{}});
 }}
 
+// 页面加载时载入历史聊天记录
+function loadChatHistory(){{
+    fetch('/api/chat/history').then(function(r){{return r.json()}}).then(function(j){{
+        if(j.ok && j.messages && j.messages.length>0){{
+            var hist=document.getElementById('chatHistory');
+            hist.innerHTML='';
+            j.messages.forEach(function(msg){{
+                var div=document.createElement('div');
+                div.className='chat-bubble '+(msg.role==='user'?'user':'ai');
+                div.textContent=msg.content;
+                hist.appendChild(div);
+            }});
+            hist.scrollTop=hist.scrollHeight;
+        }}
+    }}).catch(function(){{}});
+}}
+
 // ==================== Init ====================
 // 注册 PWA Service Worker
 if('serviceWorker' in navigator){{
@@ -1250,6 +1329,7 @@ window.addEventListener('load',function(){{
     sendLocation();
     console.log('[Audio-1c] polling + locations started — waiting for user to click 开始收听');
     document.getElementById('broadcastStatus').textContent='请点击下方按钮开始收听';
+    loadChatHistory();
 }});
 
 document.addEventListener('visibilitychange',function(){{
@@ -1275,6 +1355,205 @@ document.getElementById('chatInput').addEventListener('keydown',function(e){{
 @app.get("/listen", response_class=HTMLResponse)
 async def listen_page():
     return LISTEN_HTML.format(shared_css=SHARED_CSS)
+
+
+# ============================================================
+# /m — Mobile Admin (lightweight, one-thumb broadcast)
+# ============================================================
+M_ADMIN_HTML = """<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<title>Voicetyper · M</title>
+<style>
+    {shared_css}
+    body{{align-items:flex-start;padding-top:0.5rem}}
+    .card{{padding:1.5rem 1.2rem;max-width:420px;margin:0.5rem auto}}
+    .logo{{font-size:1.8rem;margin-bottom:0.25rem}}
+    .sub{{margin-bottom:0.8rem}}
+    /* === toggle row === */
+    .toggle-row{{
+        display:flex;align-items:center;justify-content:space-between;
+        background:rgba(124,58,237,0.04);border-radius:14px;padding:0.5rem 0.9rem;margin-bottom:0.8rem
+    }}
+    .toggle-label{{font-size:0.82rem;color:#4c1d95;font-weight:600}}
+    .toggle-status{{font-size:0.68rem;color:#a78bfa}}
+    .toggle-btn{{
+        border:none;border-radius:20px;padding:0.4rem 0.9rem;font-size:0.78rem;
+        font-weight:600;cursor:pointer;color:#fff;font-family:inherit;
+        background:linear-gradient(135deg,#10b981,#059669);transition:all 0.2s
+    }}
+    .toggle-btn.off{{background:linear-gradient(135deg,#ef4444,#f43f5e)}}
+    .toggle-btn:active{{transform:scale(0.96)}}
+    /* === textarea === */
+    textarea{{
+        width:100%;border:1.5px solid #e9d5ff;border-radius:14px;
+        background:#faf8ff;padding:0.7rem 0.85rem;font-size:0.95rem;
+        line-height:1.5;resize:none;font-family:inherit;margin-bottom:0.6rem;
+        min-height:72px;transition:border-color 0.2s
+    }}
+    textarea:focus{{border-color:#a78bfa;outline:none;box-shadow:0 0 0 4px rgba(124,58,237,0.07)}}
+    .btn-send{{
+        width:100%;border:none;border-radius:14px;font-weight:600;font-size:0.95rem;
+        padding:0.75rem;cursor:pointer;font-family:inherit;color:#fff;
+        background:linear-gradient(135deg,#7c3aed,#8b5cf6);
+        box-shadow:0 2px 10px rgba(124,58,237,0.25);margin-bottom:0.8rem
+    }}
+    /* === history === */
+    .history-title{{font-size:0.78rem;color:#a78bfa;font-weight:600;margin-bottom:0.4rem}}
+    .history-list{{display:flex;flex-direction:column;gap:0.3rem;max-height:50vh;overflow-y:auto;-webkit-overflow-scrolling:touch}}
+    .history-item{{
+        background:rgba(124,58,237,0.03);border-radius:10px;padding:0.45rem 0.7rem;
+        display:flex;justify-content:space-between;align-items:flex-start;gap:0.5rem
+    }}
+    .history-text{{font-size:0.85rem;color:#4c1d95;flex:1;word-break:break-word;line-height:1.3}}
+    .history-time{{font-size:0.62rem;color:#c4b5fd;white-space:nowrap;margin-top:0.15rem}}
+    .no-history{{text-align:center;color:#c4b5fd;font-size:0.78rem;padding:1rem 0}}
+    .send-status{{text-align:center;font-size:0.82rem;min-height:1.2em;margin-bottom:0.3rem}}
+</style>
+</head>
+<body>
+<div class="card">
+    <div class="logo">Voicetyper</div>
+    <div class="sub">Mobile Admin</div>
+
+    <!-- 激活开关 -->
+    <div class="toggle-row">
+        <div>
+            <div class="toggle-label">收听端激活</div>
+            <div class="toggle-status" id="activeLabel">未激活</div>
+        </div>
+        <button class="toggle-btn off" id="toggleBtn" onclick="toggleActivate()">激活</button>
+    </div>
+
+    <!-- 输入框 -->
+    <textarea id="text" placeholder="输入要广播的文字..." autofocus></textarea>
+    <button class="btn-send" type="button" id="sendBtn" onclick="sendBroadcast()">发送广播</button>
+    <div class="send-status" id="sendStatus"></div>
+
+    <!-- 历史记录 -->
+    <div class="history-title">广播历史</div>
+    <div class="history-list" id="historyList">
+        <div class="no-history">暂无广播记录</div>
+    </div>
+</div>
+
+<script>
+var _active=false;
+
+// 检查激活状态
+async function checkActive(){{
+    try{{
+        var r=await fetch('/api/status');
+        var j=await r.json();
+        _active=j.active;
+        updateToggleUI();
+    }}catch(e){{}}
+}}
+
+function updateToggleUI(){{
+    var btn=document.getElementById('toggleBtn');
+    var label=document.getElementById('activeLabel');
+    if(_active){{
+        btn.textContent='停用';
+        btn.classList.add('off');
+        label.textContent='已激活';
+        label.style.color='#10b981';
+    }}else{{
+        btn.textContent='激活';
+        btn.classList.remove('off');
+        label.textContent='未激活 — listen 静默中';
+        label.style.color='#a78bfa';
+    }}
+}}
+
+async function toggleActivate(){{
+    var btn=document.getElementById('toggleBtn');
+    btn.disabled=true;
+    try{{
+        var r=await fetch(_active?'/api/deactivate':'/api/activate',{{method:'POST'}});
+        var j=await r.json();
+        _active=j.active;
+        updateToggleUI();
+    }}catch(e){{}}
+    btn.disabled=false;
+}}
+
+async function sendBroadcast(){{
+    var t=document.getElementById('text').value.trim();
+    if(!t){{document.getElementById('sendStatus').textContent='请输入文字';return}}
+
+    var btn=document.getElementById('sendBtn');
+    btn.disabled=true;btn.textContent='发送中...';
+    document.getElementById('sendStatus').textContent='';
+
+    try{{
+        var f=new FormData();f.append('text',t);
+        var r=await fetch('/api/send',{{method:'POST',body:f}});
+        var j=await r.json();
+        document.getElementById('sendStatus').textContent=j.status;
+        if(j.status.indexOf('已广播')===0){{
+            document.getElementById('text').value='';
+            loadHistory();  // 刷新列表
+        }}
+    }}catch(e){{
+        document.getElementById('sendStatus').textContent='网络错误';
+    }}
+    btn.disabled=false;btn.textContent='发送广播';
+}}
+
+async function loadHistory(){{
+    try{{
+        var r=await fetch('/api/broadcast/history');
+        var j=await r.json();
+        var list=document.getElementById('historyList');
+        if(j.ok && j.items && j.items.length>0){{
+            var html='';
+            j.items.forEach(function(item){{
+                var d=new Date(item.time*1000);
+                var timeStr=d.toLocaleTimeString('zh-CN',{{hour:'2-digit',minute:'2-digit'}});
+                var dateStr='';
+                var today=new Date();
+                if(d.toDateString()!==today.toDateString()){{
+                    dateStr=(d.getMonth()+1)+'/'+d.getDate()+' ';
+                }}
+                html+='<div class="history-item">'+
+                    '<span class="history-text">'+escapeHtml(item.text)+'</span>'+
+                    '<span class="history-time">'+dateStr+timeStr+'</span>'+
+                '</div>';
+            }});
+            list.innerHTML=html;
+        }}else{{
+            list.innerHTML='<div class="no-history">暂无广播记录</div>';
+        }}
+    }}catch(e){{}}
+}}
+
+function escapeHtml(s){{
+    var d=document.createElement('div');
+    d.textContent=s;
+    return d.innerHTML;
+}}
+
+// Enter 快捷发送
+document.getElementById('text').addEventListener('keydown',function(e){{
+    if(e.key==='Enter' && !e.shiftKey){{
+        e.preventDefault();
+        sendBroadcast();
+    }}
+}});
+
+// 初始化
+checkActive();
+loadHistory();
+</script>
+</body>
+</html>"""
+
+@app.get("/m", response_class=HTMLResponse)
+async def mobile_admin_page():
+    return M_ADMIN_HTML.format(shared_css=SHARED_CSS)
 
 
 # ---- favicon ----
@@ -1376,7 +1655,22 @@ async def api_ai_chat_reset():
     global chat_history
     with chat_lock:
         chat_history = []
+        _save_chat_history()
     return JSONResponse({"ok": True})
+
+@app.get("/api/chat/history")
+async def api_chat_history():
+    """返回完整聊天记录"""
+    with chat_lock:
+        msgs = list(chat_history)
+    return JSONResponse({"ok": True, "messages": msgs})
+
+@app.get("/api/broadcast/history")
+async def api_broadcast_history():
+    """返回广播历史（最新的在前）"""
+    with broadcast_history_lock:
+        items = list(reversed(broadcast_history[-100:]))
+    return JSONResponse({"ok": True, "items": items})
 
 
 @app.post("/api/ai/chat/voice")
