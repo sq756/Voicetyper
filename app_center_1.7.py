@@ -1857,16 +1857,18 @@ app.mount("/audio", StaticFiles(directory=AUDIO_DIR), name="audio")
 if __name__ == "__main__":
     import uvicorn
     print()
-    print("  Voicetyper 1.6 — Pure HTML · Apple Style · AI · Voice Chat · PWA")
+    print("  Voicetyper 1.7 — Pure HTML · Apple Style · AI · Voice Chat · PWA")
     print("  ───────────────────────────────────────────────────────────────────")
     preload_whisper()
     try:
         import tunnel_manager
         public_url = tunnel_manager.start(7860)
-        print(f"  Admin:   {public_url}/admin")
-        print(f"  Listen:  {public_url}/listen")
+        print(f"  Admin (PC): {public_url}/admin")
+        print(f"  Admin (📱):  {public_url}/m")
+        print(f"  Listen:      {public_url}/listen")
     except Exception:
-        print("  Admin:   http://localhost:7860/admin")
-        print("  Listen:  http://localhost:7860/listen")
+        print("  Admin (PC): http://localhost:7860/admin")
+        print("  Admin (📱):  http://localhost:7860/m")
+        print("  Listen:      http://localhost:7860/listen")
     print()
     uvicorn.run(app, host="0.0.0.0", port=7860)
